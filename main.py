@@ -2,11 +2,11 @@ from simulation import *
 
 # RFID positions
 rfid_positions = [
-    (10, 5),
-    (25, 7),
-    (40, 3),
-    (35, 9),
-    (15, 1)
+    (10.1, 5.5),
+    (25.1, 7.3),
+    (40.3, 3.3),
+    (35.6, 9.1),
+    (15.6, 1)
 ]
 
 class RobotConfig:

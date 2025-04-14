@@ -1,4 +1,6 @@
 from simulation import *
+from config import *
+import numpy as np
 
 # RFID positions
 rfid_positions = [
@@ -9,21 +11,33 @@ rfid_positions = [
     (15.6, 1)
 ]
 
-class RobotConfig:
-    def __init__(self, circle_radius=1, front_distance=5, angle_range=np.pi/2):
-        self.circle_radius = circle_radius
-        self.front_distance = front_distance
-        self.angle_range = angle_range
-
-class RoomConfig:
-    def __init__(self, room_width=50, room_height=10, horizontal_step=1, vertical_step=2):
-        self.room_width = room_width
-        self.room_height = room_height
-        self.horizontal_step = horizontal_step
-        self.vertical_step = vertical_step
-
 robot_config = RobotConfig(circle_radius=1, front_distance=3, angle_range=np.pi/4)
-room_config = RoomConfig()
+room_config = RoomConfig(room_width=50, room_height=20, horizontal_step=1, vertical_step=1)
 
 if __name__ == "__main__":
-    startSimulation(robot_config, room_config, rfid_positions)
+    rfid_rmse, rfid_areas = startSimulation(robot_config, room_config, rfid_positions, True)
+
+    rmse_values = [e for e in rfid_rmse.values() if e is not None]
+    if rmse_values:
+        overall_rmse = np.sqrt(np.mean(np.square(rmse_values)))
+    else:
+        overall_rmse = None
+
+    print("RFID Areas:")
+    for i in rfid_areas:
+        if rfid_areas[i] is not None:
+            print(f"RFID {i}: Area = {rfid_areas[i]:.2f}")
+        else:
+            print(f"RFID {i}: Area = Not Detected")
+
+    print("\nRFID RMSE Errors:")
+    for i in rfid_rmse:
+        if rfid_rmse[i] is not None:
+            print(f"RFID {i}: RMSE = {rfid_rmse[i]:.2f}")
+        else:
+            print(f"RFID {i}: RMSE = Not Detected")
+
+    if overall_rmse is not None:
+        print(f"\nOverall RMSE: {overall_rmse:.2f}")
+    else:
+        print("\nOverall RMSE: Not Calculated (No RFIDs detected)")

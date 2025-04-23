@@ -1,189 +1,148 @@
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from shapely.geometry import Point
+from animation import *
+from antenna import *
 from path import *
 
+##############################
+# Configuration Classes
+##############################
+
 class RobotConfig:
-    def __init__(self, circle_radius=1, front_distance=5, angle_range=np.pi/2):
-        self.circle_radius = circle_radius
-        self.front_distance = front_distance
+    def __init__(self, angle_range=np.pi / 2, rssi_sigma=0.0, _30db_range=1, Pt=1, lam=0.33, G0=2.0, m=4):
+        """
+        Configuration for the robot and its signal reception.
+
+        Parameters:
+        - angle_range: Half-angle (in radians) of the field of view for RFID detection.
+        - rssi_sigma: Standard deviation of Gaussian noise added to RSSI measurements.
+        - _30db_range: Range at which RSSI drops by 30dB (optional).
+        - Pt: Transmit power.
+        - lam: Wavelength of signal.
+        - G0: Antenna gain.
+        - m: Path-loss exponent.
+        """
         self.angle_range = angle_range
+        self.rssi_sigma = rssi_sigma
+        self._30db_range = _30db_range
+        self.Pt = Pt
+        self.lam = lam
+        self.G0 = G0
+        self.m = m
 
 class RoomConfig:
     def __init__(self, room_width=50, room_height=10, horizontal_step=1, vertical_step=2):
+        """
+        Configuration for the dimensions of the room and robot scanning step size.
+
+        Parameters:
+        - room_width: Width of the room.
+        - room_height: Height of the room.
+        - horizontal_step: Step size in the horizontal direction.
+        - vertical_step: Step size in the vertical direction.
+        """
         self.room_width = room_width
         self.room_height = room_height
         self.horizontal_step = horizontal_step
         self.vertical_step = vertical_step
 
-def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
-    rfid_detections = {i: [] for i in range(len(rfid_positions))}
-    shapes = {i: [] for i in range(len(rfid_positions))}
+##############################
+# Main Simulation Function
+##############################
 
+def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
+    """
+    Runs the main simulation for RFID detection using a moving robot.
+
+    Process:
+    1. Generate robot path through the room.
+    2. At each step, measure RSSI from each RFID.
+    3. Convert RSSI measurements to feasible regions (annular sectors).
+    4. Intersect regions to estimate RFID location.
+    5. Optionally animate the process.
+
+    Returns:
+    - rfid_rmse: Dictionary of RMSE between estimated and actual RFID positions.
+    - rfid_areas: Area of each estimated feasible zone.
+    - rfid_measurements: RSSI measurement logs.
+    """
+
+    # Step 1: Generate robot's movement path
+    robot_path = generate_robot_path(
+        room_config.room_width,
+        room_config.room_height,
+        room_config.horizontal_step,
+        room_config.vertical_step
+    )
+
+    # Step 2: Initialize RSSI measurement storage
+    rfid_measurements = {i: [] for i in range(len(rfid_positions))}
+
+    # Step 3: Take RSSI measurements at each step for each RFID
+    for (x, y, orientation) in robot_path:
+        robot_pos = (x, y)
+        for i, rfid_pos in enumerate(rfid_positions):
+            rssi_val = get_rssi_measurement(robot_pos, orientation, rfid_pos, robot_config)
+            rfid_measurements[i].append((robot_pos, orientation, rssi_val))
+
+    # Step 4: Convert RSSI measurements into polygonal detection bands and intersect them
     rfid_zones = {}
     rfid_areas = {}
     rfid_rmse = {}
+    all_shapes = {}
 
-    robot_path = generate_robot_path(room_config.room_width, room_config.room_height, room_config.horizontal_step, room_config.vertical_step)
+    for i, rfid_pos in enumerate(rfid_positions):
+        measurement_list = rfid_measurements[i]
+        shapes = []
 
-    for x, y, orientation in robot_path:
-        position = (x, y)
-        detection_shape = get_robot_detection_shape(position, orientation, robot_config)
+        for (pos, orientation, rssival) in measurement_list:
+            # Convert each RSSI value into an annular sector shape
+            poly = detection_band_region(
+                rssival,
+                Pt=robot_config.Pt,
+                lam=robot_config.lam,
+                G0=robot_config.G0,
+                m=robot_config.m,
+                theta0=np.deg2rad(orientation),
+                x0=pos[0],
+                y0=pos[1],
+                n_points=360
+            )
 
-        for i, rfid_pos in enumerate(rfid_positions):
-            rfid_point = Point(rfid_pos)
-            if detection_shape.contains(rfid_point):
-                rfid_detections[i].append(position)
-                shapes[i].append(detection_shape)
+            if not poly.is_empty:
+                shapes.append(poly)
 
-    for i, detections in rfid_detections.items():
-        if shapes[i]:
-            estimated_zone = shapes[i][0]
-            for shape in shapes[i][1:]:
-                estimated_zone = estimated_zone.intersection(shape)
-            rfid_zones[i] = estimated_zone
-
-            rfid_areas[i] = estimated_zone.area
-
-            estimated_centroid = estimated_zone.centroid
-            actual_position = Point(rfid_positions[i])
-            error = estimated_centroid.distance(actual_position)
-            rfid_rmse[i] = error
-        else:
-            # RFID was never detected
+        # Step 5: Compute intersection of all shapes
+        if not shapes:
             rfid_zones[i] = None
             rfid_areas[i] = None
             rfid_rmse[i] = None
+        else:
+            estimated_zone = shapes[0]
+            for s in shapes[1:]:
+                intersection = estimated_zone.intersection(s)
+                if not intersection.is_empty:
+                    estimated_zone = intersection
 
+            rfid_zones[i] = estimated_zone
+            rfid_areas[i] = estimated_zone.area if not estimated_zone.is_empty else 0
+
+            # Step 6: Estimate position and compute RMSE
+            if not estimated_zone.is_empty:
+                estimated_centroid = estimated_zone.centroid
+                actual_position = Point(rfid_pos)
+                print("Estimated position:", estimated_centroid, "Actual position:", actual_position)
+                error = estimated_centroid.distance(actual_position)
+                rfid_rmse[i] = error
+            else:
+                rfid_rmse[i] = None
+
+            all_shapes[i] = shapes
+
+    # Step 7: Optional animation
     if withAnimation:
-        animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions)
-        
-    return rfid_rmse, rfid_areas
+        animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions, all_shapes)
 
-# Define the robot's detection shape
-def get_robot_detection_shape(position, orientation_degrees, robot_config, angle_resolution=360):
-    x, y = position
-
-    # Define the circle at the back
-    circle_radius = robot_config.circle_radius
-    back_circle = Point(x, y).buffer(circle_radius)
-
-    # Define the front detection shape using the sinc function
-    front_distance = robot_config.front_distance  # How far the sinc function extends
-    angle_range = robot_config.angle_range  # Angular range for the front detection
-
-    angles = np.linspace(-angle_range, angle_range, angle_resolution)
-
-    # Rotate angles by the robot's orientation
-    orientation_radians = np.deg2rad(orientation_degrees)
-    rotated_angles = angles + orientation_radians
-
-    sinc_values = np.sinc(angles / np.pi)  # Normalized sinc function
-
-    # Scale sinc to desired front shape
-    front_points = []
-    for theta, s in zip(rotated_angles, sinc_values):
-        distance = front_distance * s
-        if distance <= 0:
-            continue
-        dx = distance * np.cos(theta)
-        dy = distance * np.sin(theta)
-        front_points.append((x + dx, y + dy))
-    # Close the front shape by adding the robot position
-    if front_points:
-        front_polygon = Polygon([position] + front_points)
-    else:
-        front_polygon = Point(x, y)  # If no points, degenerate to a point
-
-    # Combine the back circle and front shape
-    detection_shape = back_circle.union(front_polygon)
-    return detection_shape
-
-
-def generate_robot_path(room_width, room_height, horizontal_step, vertical_step):
-    path = []
-    x = 0
-    y = 0
-    direction = 1 
-    orientation = 0
-    while y <= room_height:
-        x_end = room_width if direction == 1 else 0
-        while (direction == 1 and x <= x_end) or (direction == -1 and x >= x_end):
-            path.append((x, y, orientation))
-            x += horizontal_step * direction
-        x = max(0, min(x, room_width))
-        if y + vertical_step > room_height:
-            break  # Do not proceed further if we've reached the max height
-        if direction == 1:
-            orientation = (orientation + 90) % 360
-        else:
-            orientation = (orientation - 90) % 360
-        path.append((x, y, orientation))  # Include rotation at current position
-        # Move up
-        y += vertical_step
-        path.append((x, y, orientation))  # Include movement up
-        if direction == 1:
-            orientation = (orientation + 90) % 360
-        else:
-            orientation = (orientation - 90) % 360
-        path.append((x, y, orientation))  # Include rotation at current position
-        direction *= -1
-    return path
-
-
-
-
-def animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions):
-    # Visualization
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    # Plot the room
-    ax.set_xlim(0, room_config.room_width)
-    ax.set_ylim(0, room_config.room_height)
-    ax.set_aspect('equal')
-
-    # Plot RFIDs
-    for rfid_pos in rfid_positions:
-        ax.plot(rfid_pos[0], rfid_pos[1], 'ro', label='RFID')
-
-    # Plot robot path
-    path_x = [pos[0] for pos in robot_path]
-    path_y = [pos[1] for pos in robot_path]
-    ax.plot(path_x, path_y, 'k--', linewidth=0.5, label='Robot Path')
-
-    robot_marker, = ax.plot([], [], 'bo', label='Robot')
-    detection_patch = None
-
-    def init():
-        robot_marker.set_data([], [])
-        return robot_marker,
-
-    def update(frame):
-        global detection_patch
-        x, y, orientation = robot_path[frame]
-        position = (x, y)
-        
-        robot_marker.set_data([position[0]], [position[1]])
-
-        # Plot detection shape
-        detection_shape = get_robot_detection_shape(position, orientation, robot_config)
-        if not detection_shape.is_empty and isinstance(detection_shape, Polygon):
-            x_detection, y_detection = detection_shape.exterior.xy
-            detection_patch = ax.fill(x_detection, y_detection, alpha=0.3, fc='blue')[0]
-        else:
-            detection_patch = None
-        
-        return robot_marker
-
-    ani = FuncAnimation(fig, update, frames=len(robot_path), init_func=init,
-                        blit=False, interval=100, repeat=False)
-
-    for i, zone in rfid_zones.items():
-        if zone and not zone.is_empty:
-            x_zone, y_zone = zone.exterior.xy
-            ax.fill(x_zone, y_zone, alpha=0.5, label=f'RFID {i} Estimated Zone')
-
-    ax.legend()
-    plt.title("RFID Localization Simulation")
-    plt.xlabel("X Position")
-    plt.ylabel("Y Position")
-    plt.show()
+    return rfid_rmse, rfid_areas, rfid_measurements

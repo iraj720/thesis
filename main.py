@@ -9,16 +9,15 @@ import numpy as np
 # Define the fixed positions of RFID tags in the room
 rfid_positions = [
     (15.1, 12.5),
-    (25.1, 7.3),
-    (40.3, 3.3),
-    (35.6, 9.1),
-    (15.6, 1)
+    # (25.1, 7.3),
+    # (40.3, 3.3),
+    # (35.6, 9.1),
+    # (15.6, 1)
 ]
 
 # Configure robot sensing properties and room dimensions
 robot_config = RobotConfig(
-    rssi_sigma=0,             # No RSSI noise
-    angle_range=np.pi / 4     # 45-degree antenna field of view
+    angle_range=np.pi / 2     # 45-degree antenna field of view
 )
 
 room_config = RoomConfig(

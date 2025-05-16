@@ -5,13 +5,14 @@ from shapely.geometry import Point
 from animation import *
 from antenna import *
 from path import *
+from algorithm import *
 
 ##############################
 # Configuration Classes
 ##############################
 
 class RobotConfig:
-    def __init__(self, angle_range=np.pi / 2, rssi_sigma=0.0, _30db_range=1, Pt=1, lam=0.33, G0=2.0, m=4):
+    def __init__(self, angle_range=np.pi / 2, Pt=1, lam=0.33, G0=2.0, m=4):
         """
         Configuration for the robot and its signal reception.
 
@@ -25,8 +26,6 @@ class RobotConfig:
         - m: Path-loss exponent.
         """
         self.angle_range = angle_range
-        self.rssi_sigma = rssi_sigma
-        self._30db_range = _30db_range
         self.Pt = Pt
         self.lam = lam
         self.G0 = G0
@@ -77,6 +76,18 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
         room_config.vertical_step
     )
 
+    isotropicAntenna = IsotropicAntenna()
+    cosineAntenna = CosineAntenna(
+        Pt=robot_config.Pt,
+        lam=robot_config.lam,
+        G0=robot_config.G0,
+        m=robot_config.m,
+        theta_lim=robot_config.angle_range,
+        n_points=360,
+    )
+
+    antenna = isotropicAntenna
+
     # Step 2: Initialize RSSI measurement storage
     rfid_measurements = {i: [] for i in range(len(rfid_positions))}
 
@@ -84,8 +95,8 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
     for (x, y, orientation) in robot_path:
         robot_pos = (x, y)
         for i, rfid_pos in enumerate(rfid_positions):
-            rssi_val = get_rssi_measurement(robot_pos, orientation, rfid_pos, robot_config)
-            rfid_measurements[i].append((robot_pos, orientation, rssi_val))
+            rssi = antenna.measure_rssi(rfid_pos[0], rfid_pos[1], robot_pos[0], robot_pos[1], orientation)
+            rfid_measurements[i].append((robot_pos, orientation, rssi))
 
     # Step 4: Convert RSSI measurements into polygonal detection bands and intersect them
     rfid_zones = {}
@@ -99,17 +110,8 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
 
         for (pos, orientation, rssival) in measurement_list:
             # Convert each RSSI value into an annular sector shape
-            poly = detection_band_region(
-                rssival,
-                Pt=robot_config.Pt,
-                lam=robot_config.lam,
-                G0=robot_config.G0,
-                m=robot_config.m,
-                theta0=np.deg2rad(orientation),
-                x0=pos[0],
-                y0=pos[1],
-                n_points=360
-            )
+            poly = detection_shape(np.deg2rad(orientation), rssival, 3, antenna)
+            poly = translate(poly, xoff=pos[0], yoff=pos[1])
 
             if not poly.is_empty:
                 shapes.append(poly)
@@ -133,7 +135,7 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
             if not estimated_zone.is_empty:
                 estimated_centroid = estimated_zone.centroid
                 actual_position = Point(rfid_pos)
-                print("Estimated position:", estimated_centroid, "Actual position:", actual_position)
+                # print("Estimated position:", estimated_centroid, "Actual position:", actual_position)
                 error = estimated_centroid.distance(actual_position)
                 rfid_rmse[i] = error
             else:
@@ -141,7 +143,6 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
 
             all_shapes[i] = shapes
 
-    # Step 7: Optional animation
     if withAnimation:
         animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions, all_shapes)
 

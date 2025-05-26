@@ -1,149 +1,190 @@
 import numpy as np
+import trimesh
+from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from shapely.geometry import Point
-from animation import *
-from antenna import *
-from path import *
-from algorithm import *
 
 ##############################
-# Configuration Classes
+# Config Classes
 ##############################
 
 class RobotConfig:
-    def __init__(self, angle_range=np.pi / 2, Pt=1, lam=0.33, G0=2.0, m=4):
-        """
-        Configuration for the robot and its signal reception.
-
-        Parameters:
-        - angle_range: Half-angle (in radians) of the field of view for RFID detection.
-        - rssi_sigma: Standard deviation of Gaussian noise added to RSSI measurements.
-        - _30db_range: Range at which RSSI drops by 30dB (optional).
-        - Pt: Transmit power.
-        - lam: Wavelength of signal.
-        - G0: Antenna gain.
-        - m: Path-loss exponent.
-        """
-        self.angle_range = angle_range
-        self.Pt = Pt
-        self.lam = lam
-        self.G0 = G0
-        self.m = m
+    def __init__(self, Pt=1.0, lam=0.33, G0=1.0, m=2.0, noise_db=1.0):
+        self.Pt, self.lam, self.G0, self.m = Pt, lam, G0, m
+        self.noise_db = noise_db
 
 class RoomConfig:
-    def __init__(self, room_width=50, room_height=10, horizontal_step=1, vertical_step=2):
-        """
-        Configuration for the dimensions of the room and robot scanning step size.
-
-        Parameters:
-        - room_width: Width of the room.
-        - room_height: Height of the room.
-        - horizontal_step: Step size in the horizontal direction.
-        - vertical_step: Step size in the vertical direction.
-        """
-        self.room_width = room_width
-        self.room_height = room_height
-        self.horizontal_step = horizontal_step
-        self.vertical_step = vertical_step
+    def __init__(self, x_max=10, y_max=10, z_max=5, step=1):
+        self.x_max, self.y_max, self.z_max, self.step = x_max, y_max, z_max, step
 
 ##############################
-# Main Simulation Function
+# Antenna & Propagation
 ##############################
 
-def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
-    """
-    Runs the main simulation for RFID detection using a moving robot.
+class IsotropicAntenna3D:
+    def __init__(self, cfg: RobotConfig):
+        self.Pt, self.lam, self.G0, self.m = cfg.Pt, cfg.lam, cfg.G0, cfg.m
 
-    Process:
-    1. Generate robot path through the room.
-    2. At each step, measure RSSI from each RFID.
-    3. Convert RSSI measurements to feasible regions (annular sectors).
-    4. Intersect regions to estimate RFID location.
-    5. Optionally animate the process.
+    def measure_rssi(self, dist):
+        # Friis: Pr ∝ d^{-m} → rssi_db = 10 log10(Pr)
+        if dist <= 0 :
+            return 1000
+        
+        Pr = self.Pt * self.G0 * (self.lam/(4*np.pi*dist))**self.m
+        return 10*np.log10(Pr)
 
-    Returns:
-    - rfid_rmse: Dictionary of RMSE between estimated and actual RFID positions.
-    - rfid_areas: Area of each estimated feasible zone.
-    - rfid_measurements: RSSI measurement logs.
-    """
+    def rssi_to_range(self, rssi_db):
+        Pr = 10**(rssi_db/10)
+        return self.lam/(4*np.pi)*(self.Pt*self.G0/Pr)**(1/self.m)
 
-    # Step 1: Generate robot's movement path
-    robot_path = generate_robot_path(
-        room_config.room_width,
-        room_config.room_height,
-        room_config.horizontal_step,
-        room_config.vertical_step
-    )
+##############################
+# Path Generation
+##############################
 
-    isotropicAntenna = IsotropicAntenna()
-    cosineAntenna = CosineAntenna(
-        Pt=robot_config.Pt,
-        lam=robot_config.lam,
-        G0=robot_config.G0,
-        m=robot_config.m,
-        theta_lim=robot_config.angle_range,
-        n_points=360,
-    )
+def generate_robot_path_3d(room: RoomConfig):
+    path = []
+    # build a list of (x,y,z) waypoints in scan order
+    waypoints = []
+    zs = np.linspace(1, room.z_max-1, int(room.z_max/room.step))
+    for z in zs:
+        for xi in np.arange(0, room.x_max + 1e-6, room.step):
+            for yi in np.arange(0, room.y_max + 1e-6, room.step):
+                waypoints.append((xi, yi, z))
 
-    antenna = isotropicAntenna
-
-    # Step 2: Initialize RSSI measurement storage
-    rfid_measurements = {i: [] for i in range(len(rfid_positions))}
-
-    # Step 3: Take RSSI measurements at each step for each RFID
-    for (x, y, orientation) in robot_path:
-        robot_pos = (x, y)
-        for i, rfid_pos in enumerate(rfid_positions):
-            rssi = antenna.measure_rssi(rfid_pos[0], rfid_pos[1], robot_pos[0], robot_pos[1], orientation)
-            rfid_measurements[i].append((robot_pos, orientation, rssi))
-
-    # Step 4: Convert RSSI measurements into polygonal detection bands and intersect them
-    rfid_zones = {}
-    rfid_areas = {}
-    rfid_rmse = {}
-    all_shapes = {}
-
-    for i, rfid_pos in enumerate(rfid_positions):
-        measurement_list = rfid_measurements[i]
-        shapes = []
-
-        for (pos, orientation, rssival) in measurement_list:
-            # Convert each RSSI value into an annular sector shape
-            poly = detection_shape(np.deg2rad(orientation), rssival, 3, antenna)
-            poly = translate(poly, xoff=pos[0], yoff=pos[1])
-
-            if not poly.is_empty:
-                shapes.append(poly)
-
-        # Step 5: Compute intersection of all shapes
-        if not shapes:
-            rfid_zones[i] = None
-            rfid_areas[i] = None
-            rfid_rmse[i] = None
+    # now compute a continuous path with orientations
+    prev = None
+    for wp in waypoints:
+        x, y, z = wp
+        if prev is None:
+            # first point: we just point yaw=0, pitch=0
+            yaw = 0.0
+            pitch = 0.0
         else:
-            estimated_zone = shapes[0]
-            for s in shapes[1:]:
-                intersection = estimated_zone.intersection(s)
-                if not intersection.is_empty:
-                    estimated_zone = intersection
-
-            rfid_zones[i] = estimated_zone
-            rfid_areas[i] = estimated_zone.area if not estimated_zone.is_empty else 0
-
-            # Step 6: Estimate position and compute RMSE
-            if not estimated_zone.is_empty:
-                estimated_centroid = estimated_zone.centroid
-                actual_position = Point(rfid_pos)
-                # print("Estimated position:", estimated_centroid, "Actual position:", actual_position)
-                error = estimated_centroid.distance(actual_position)
-                rfid_rmse[i] = error
+            dx = x - prev[0]
+            dy = y - prev[1]
+            dz = z - prev[2]
+            # compute horizontal yaw
+            yaw = np.degrees(np.arctan2(dy, dx))
+            # compute pitch (elevation angle)
+            horizontal_dist = np.hypot(dx, dy)
+            if horizontal_dist < 1e-6:
+                pitch = 0.0
             else:
-                rfid_rmse[i] = None
+                pitch = np.degrees(np.arctan2(dz, horizontal_dist))
+        path.append((x, y, z, yaw, pitch))
+        prev = (x, y, z)
 
-            all_shapes[i] = shapes
+    return path
 
-    if withAnimation:
-        animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions, all_shapes)
+##############################
+# 3D Sector Volume
+##############################
 
-    return rfid_rmse, rfid_areas, rfid_measurements
+def build_sector_volume(center, yaw, pitch, rng, thickness=0.5, cone_ang=30):
+    # spherical shell
+    outer = trimesh.creation.icosphere(2, radius=rng+thickness)
+    inner = trimesh.creation.icosphere(2, radius=max(rng-thickness,0.1))
+    shell = outer.difference(inner)
+    # cone
+    cone = trimesh.creation.cone(radius=(rng+thickness)*np.tan(np.deg2rad(cone_ang)),
+                                 height=2*(rng+thickness), sections=32)
+    # align cone axis Z→ vector(yaw,pitch)
+    # build rotation
+    rot = R.from_euler('zy', [yaw, pitch], degrees=True).as_matrix()
+    mat = np.eye(4); mat[:3,:3]=rot
+    cone.apply_transform(mat)
+    cone.apply_translation(center)
+    vol = shell.intersection(cone)
+    return vol
+
+##############################
+# Main Localization + Visualization
+##############################
+
+def localize_and_visualize(robot_cfg, room_cfg, tag_positions):
+    ant = IsotropicAntenna3D(robot_cfg)
+    path = generate_robot_path_3d(room_cfg)
+    # measurements → volumes
+    tag_volumes = {i: [] for i in range(len(tag_positions))}
+    for pose in path:
+        x,y,z,yaw,pitch = pose
+        for i,(tx,ty,tz) in enumerate(tag_positions):
+            d = np.linalg.norm([tx-x,ty-y,tz-z])
+            rssi = ant.measure_rssi(d)
+            rng = ant.rssi_to_range(rssi)
+            vol = build_sector_volume((x,y,z), yaw, pitch, rng)
+            tag_volumes[i].append(vol)
+
+    # intersect all volumes per tag
+    estimates, areas, errors = {}, {}, {}
+    for i, vols in tag_volumes.items():
+        if not vols:
+            estimates[i]=None; areas[i]=0; errors[i]=None; continue
+        region = vols[0]
+        for v in vols[1:]:
+            region = region.intersection(v)
+            if region.is_empty: break
+        if region.is_empty:
+            estimates[i]=None; areas[i]=0; errors[i]=None
+        else:
+            c = region.centroid
+            tx,ty,tz = tag_positions[i]
+            err = np.linalg.norm([c[0]-tx, c[1]-ty, c[2]-tz])
+            estimates[i]=(c,err)
+            areas[i]=region.volume
+            errors[i]=err
+
+    # set up plotting
+    fig = plt.figure(figsize=(12,5))
+    ax_xy = fig.add_subplot(1,2,1); ax_xy.set_title("X–Y Projection")
+    ax_xz = fig.add_subplot(1,2,2); ax_xz.set_title("X–Z Projection")
+    for (tx,ty,tz) in tag_positions:
+        ax_xy.plot(tx,ty,'ro'); ax_xz.plot(tx,tz,'ro')
+
+    # animate robot and feasible region contours
+    robot_dot_xy, = ax_xy.plot([],[],'b.')
+    robot_dot_xz, = ax_xz.plot([],[],'b.')
+    region_patch_xy=[]; region_patch_xz=[]
+
+    def init():
+        robot_dot_xy.set_data([],[]); robot_dot_xz.set_data([],[])
+        return [robot_dot_xy,robot_dot_xz]
+
+    def update(frame):
+        # clear old
+        for p in region_patch_xy+region_patch_xz:
+            p.remove()
+        region_patch_xy.clear(); region_patch_xz.clear()
+        x,y,z,_,_ = path[frame]
+        robot_dot_xy.set_data([x], [y])
+        robot_dot_xz.set_data([x], [z])
+        # draw region projections at this frame
+        for i, vols in tag_volumes.items():
+            if frame<len(vols):
+                vol=vols[frame]
+                if not vol.is_empty:
+                    # mesh vertices
+                    pts = np.array(vol.vertices)
+                    # project XY
+                    patch_xy = ax_xy.scatter(pts[:,0],pts[:,1],s=1,alpha=0.1)
+                    # project XZ
+                    patch_xz = ax_xz.scatter(pts[:,0],pts[:,2],s=1,alpha=0.1)
+                    region_patch_xy.append(patch_xy)
+                    region_patch_xz.append(patch_xz)
+        return [robot_dot_xy,robot_dot_xz]+region_patch_xy+region_patch_xz
+
+    ani = FuncAnimation(fig, update, frames=len(path),
+                        init_func=init,interval=200,blit=False)
+    plt.tight_layout()
+    plt.show()
+
+    # print summary
+    print("Estimates:", estimates)
+    print("Areas:", areas)
+    print("Errors:", errors)
+
+if __name__=="__main__":
+    rc = RobotConfig()
+    rm = RoomConfig()
+    tags=[(5,5,1),(15,10,3)]
+    localize_and_visualize(rc, rm, tags)

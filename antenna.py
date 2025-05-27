@@ -1,28 +1,67 @@
 import numpy as np
 import math
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon, Point, MultiPolygon
 from scipy.stats import beta as BetaDist
 from abc import ABC, abstractmethod
+from estimate_std import *
 
+# === Abstract Antenna Interface === #
 class Antenna(ABC):
     @abstractmethod
     def detection_shape(self, rssi, azimuth) -> Polygon:
+        """Return detection region as a polygon based on RSSI and azimuth."""
         pass
 
-class IsotropicAntenna(Antenna):
-    def detection_shape(self, rssi, azimuth) -> Polygon:
-        if rssi >= 0 or rssi <= -100:
-            return Polygon()
-        
-        distance = np.e ** ((-rssi - 42.43) / 11.55)
-        # distance = 10 ** ((-58.54209328 - rssi) / (10 * 2.084114501909108))
-        return Point(0, 0).buffer(distance, resolution=64)
-    
-    def measure_rssi(self, x, y, x_ant, y_ant, azimuth): 
-        return calculate_rssi(np.sqrt((x_ant-x)**2+ (y_ant-y)**2))
-    
+    def estimated_noise_in_sigma(self, rssi) -> float:
+        """Estimate noise level in sigma based on RSSI value."""
+        return estimated_std_poly(rssi)
 
-    
+
+# === Custom Sector-Based Antenna === #
+class CustomAntenna(Antenna):
+    def detection_shape(self, rssi, azimuth, angle_range=90) -> Polygon:
+        if rssi >= 0 or rssi <= -100:
+            return Polygon()  # Invalid signal strength
+
+        num_points = 64  # Angular resolution
+        half_angle = azimuth - (angle_range / 2)
+        points = [(0, 0)]  # Start with antenna position at origin
+
+        # detection_shape first considers n number of angles and for each angle it computes the correspondig d for it
+        # so we have d with phase of theta which is a point 
+        # by putting all of these points together we have the final detection shape
+
+        for i in range(num_points + 1):
+            theta = half_angle + (i * angle_range / num_points)
+            phi = (i * angle_range / num_points) - (angle_range / 2)
+
+            # Distance model as an exponential function of RSSI and phi
+            d = np.exp((-rssi - (phi ** 2) / 227 - 42.43) / 11.55)
+            rad = np.deg2rad(theta)
+            x = d * math.cos(rad)
+            y = d * math.sin(rad)
+            points.append((x, y))
+
+        return Polygon(points)
+
+    def measure_rssi(self, x, y, x_ant, y_ant, azimuth):
+        """Measure RSSI at (x, y) relative to antenna at (x_ant, y_ant)."""
+        angleAtt = self.angleAttenuation(x, y, x_ant, y_ant, azimuth)
+        if angleAtt is None:
+            return -1000  # Out of beam
+        distance = np.hypot(x_ant - x, y_ant - y)
+        return calculate_rssi(distance) + angleAtt
+
+    def angleAttenuation(self, x, y, x_ant, y_ant, azimuth):
+        """Return angle-dependent attenuation if within 45°, otherwise None."""
+        dx, dy = x - x_ant, y - y_ant
+        angle_to_point = np.degrees(np.arctan2(dy, dx))
+        delta_theta = (angle_to_point - azimuth + 180) % 360 - 180
+
+        if abs(delta_theta) > 45:
+            return None
+        return -(delta_theta ** 2) / 227
+
 class CosineAntenna(Antenna):
     def __init__(self,Pt=1, lam=0.33, G0=2.0, m=4, n_points=360, theta_lim=np.pi/2):
         self.Pt=Pt

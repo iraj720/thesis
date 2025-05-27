@@ -60,30 +60,34 @@ def animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions, a
 
         # For each RFID, compute updated estimated zone
         for rfid_id, shapes in all_shapes.items():
-            # estimated_zone = estimated_zones[rfid_id].intersection(shapes[frame])
-            # if not estimated_zone.is_empty:
-            #     estimated_zones[rfid_id] = estimated_zone
+            estimated_zone = estimated_zones[rfid_id].intersection(shapes[frame])
+            if not estimated_zone.is_empty:
+                estimated_zones[rfid_id] = estimated_zone
+
+            shape = estimated_zones[rfid_id] # uncomment this if you to see intersected result
+            # shape = shapes[frame] # uncomment this if you want to see detection in each step
 
             patches = []
 
-
             # Fill area if intersection exists
-            if not shapes[frame].is_empty:
-                if isinstance(shapes[frame], Polygon):
-                    x, y = shapes[frame].exterior.xy
+            if not shape.is_empty:
+                if isinstance(shape, Polygon):
+                    x, y = shape.exterior.xy
                     patches = ax.fill(x, y, alpha=0.5, label=f'RFID {rfid_id} Estimated Zone')
 
-                    for interior in shapes[frame].interiors:
+                    for interior in shape.interiors:
                         x_int, y_int = interior.xy
                         ax.fill(x_int, y_int, fc='white')
-                elif isinstance(shapes[frame], MultiPolygon):
-                    for poly in shapes[frame].geoms:
+
+                elif isinstance(shape, MultiPolygon):
+                    for poly in shape.geoms:
                         x, y = poly.exterior.xy
                         patches_temp = ax.fill(x, y, alpha=0.5, label=f'RFID {rfid_id} Estimated Zone')
                         patches.extend(patches_temp)
+
                 zone_patches.append(patches)
             
-            time.sleep(0.5)  # For slower, more visual animation
+            time.sleep(0.2)  # For slower, more visual animation
         return [robot_marker] +[p for sub in zone_patches for p in sub]
 
     ####################

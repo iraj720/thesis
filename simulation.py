@@ -6,6 +6,7 @@ from animation import *
 from antenna import *
 from path import *
 from algorithm import *
+import time
 
 ##############################
 # Configuration Classes
@@ -76,17 +77,7 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
         room_config.vertical_step
     )
 
-    isotropicAntenna = IsotropicAntenna()
-    cosineAntenna = CosineAntenna(
-        Pt=robot_config.Pt,
-        lam=robot_config.lam,
-        G0=robot_config.G0,
-        m=robot_config.m,
-        theta_lim=robot_config.angle_range,
-        n_points=360,
-    )
-
-    antenna = isotropicAntenna
+    antenna = CustomAntenna()
 
     # Step 2: Initialize RSSI measurement storage
     rfid_measurements = {i: [] for i in range(len(rfid_positions))}
@@ -110,11 +101,13 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
 
         for (pos, orientation, rssival) in measurement_list:
             # Convert each RSSI value into an annular sector shape
-            poly = detection_shape(np.deg2rad(orientation), rssival, 3, antenna)
+            poly = detection_shape(orientation, rssival, antenna)
+
+            # giving the right offset to detection shape
             poly = translate(poly, xoff=pos[0], yoff=pos[1])
 
-            if not poly.is_empty:
-                shapes.append(poly)
+            # add the detected shape to detected shapes for this RFID
+            shapes.append(poly)
 
         # Step 5: Compute intersection of all shapes
         if not shapes:
@@ -124,9 +117,11 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
         else:
             estimated_zone = shapes[0]
             for s in shapes[1:]:
-                intersection = estimated_zone.intersection(s)
-                if not intersection.is_empty:
-                    estimated_zone = intersection
+                # intersect shapes
+                if s.is_valid and estimated_zone.is_valid:
+                    intersection = estimated_zone.intersection(s)
+                    if not intersection.is_empty:
+                        estimated_zone = intersection
 
             rfid_zones[i] = estimated_zone
             rfid_areas[i] = estimated_zone.area if not estimated_zone.is_empty else 0

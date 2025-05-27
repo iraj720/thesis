@@ -6,20 +6,19 @@ from shapely.ops import unary_union
 from shapely.affinity import rotate, translate
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 
 
-def detection_shape(azimuth, rssi, estimated_noise_in_percent, antenna: Antenna):
+def detection_shape(azimuth, rssi, antenna: Antenna):
     if rssi >= 0:
         return Polygon()
+    
+    noise = antenna.estimated_noise_in_sigma(rssi)
 
-    lower = rssi * (100 - estimated_noise_in_percent) / 100
-    upper = rssi * (100 + estimated_noise_in_percent) / 100
-
-    upper_detection_shape = antenna.detection_shape(upper, azimuth)
-    lower_detection_shape = antenna.detection_shape(lower, azimuth)
+    upper_detection_shape = antenna.detection_shape(rssi - (noise * 2), azimuth)
+    lower_detection_shape = antenna.detection_shape(rssi + (noise * 2), azimuth)
 
     return upper_detection_shape.difference(lower_detection_shape)
-
 
 def estimated_zone(detected_shapes : list):
     estimated_zone = detected_shapes[0]
@@ -101,7 +100,7 @@ if __name__ == "__main__":
     detected_shapes = []
     for rec in edge_data["edge_1"]:
         x, y, rssi, azimuth = rec["realx"], rec["realy"], rec["rssi"], rec["azimuth"]
-        detected_shape = detection_shape(((90-azimuth)*np.pi)/180 ,rssi, 12, IsotropicAntenna(), x, y)
+        detected_shape = detection_shape(((90-azimuth)*np.pi)/180 ,rssi, 12, CustomAntenna(), x, y)
         detected_shape = translate(detected_shape, xoff=x, yoff=y)
         if detected_shape.is_valid:
             detected_shapes.append(detected_shape)

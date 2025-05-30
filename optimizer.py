@@ -1,7 +1,8 @@
 import numpy as np
-from simulation import *
 import itertools
 import time
+import matplotlib.pyplot as plt
+from simulation import startSimulation, RobotConfig, RoomConfig
 
 # RFID positions
 rfid_positions = [
@@ -13,81 +14,63 @@ rfid_positions = [
 
 def main():
     # Define parameter ranges
-    room_width_range = [10, 20]                         # Example: 50 and 60 units
-    room_height_range = [10, 20]                        # Example: 10 and 15 units
-    horizontal_step_range = np.arange(0.1, 2.1, 0.1).round(2).tolist()  # 0.1 to 2.0 with step 0.1
-    vertical_step_range = np.arange(0.1, 2.1, 0.1).round(2).tolist()
+    room_width_range = [10, 20]
+    room_height_range = [10, 20]
+    horizontal_step_range = np.arange(0.1, 1.1, 0.1).round(2).tolist()
+    vertical_step_range = np.arange(0.1, 1.1, 0.1).round(2).tolist()
     
-    # Create all possible combinations
-    parameter_combinations = list(itertools.product(
+    # Prepare lists to collect results per parameter
+    results = {
+        'room_width': [],
+        'room_height': [],
+        'horizontal_step': [],
+        'vertical_step': [],
+        'rmse': []
+    }
+    
+    # Iterate through all combinations
+    start_time = time.time()
+    combinations = list(itertools.product(
         room_width_range,
         room_height_range,
         horizontal_step_range,
         vertical_step_range
     ))
     
-    print(f"Total parameter combinations to evaluate: {len(parameter_combinations)}")
-    
-    best_rmse = float('inf')
-    best_parameters = None
-    best_results = None
-    
-    # To track progress
-    start_time = time.time()
-    
-    for idx, (room_width, room_height, horizontal_step, vertical_step) in enumerate(parameter_combinations, 1):
-        print(f"\nRunning simulation {idx}/{len(parameter_combinations)} with parameters:")
-        print(f"  Room Width: {room_width}")
-        print(f"  Room Height: {room_height}")
-        print(f"  Horizontal Step: {horizontal_step}")
-        print(f"  Vertical Step: {vertical_step}")
-        
-        # Initialize configurations
+    for room_width, room_height, h_step, v_step in combinations:
         robot_config = RobotConfig()
         room_config = RoomConfig(
             room_width=room_width,
             room_height=room_height,
-            horizontal_step=horizontal_step,
-            vertical_step=vertical_step
+            horizontal_step=h_step,
+            vertical_step=v_step
         )
         
-        # Run simulation
-        rfid_rmse, rfid_areas, mesures = startSimulation(robot_config, room_config, rfid_positions, False)
-
-        overall_rmse = 0.0
-        rmse_values = [e for e in rfid_rmse.values() if e is not None]
-        if rmse_values:
-            overall_rmse = np.sqrt(np.mean(np.square(rmse_values)))
-        else:
-            overall_rmse = None
+        rfid_rmse, _, _ = startSimulation(robot_config, room_config, rfid_positions, False)
+        rmse_vals = [e for e in rfid_rmse.values() if e is not None]
+        if not rmse_vals:
+            continue
+        overall_rmse = np.sqrt(np.mean(np.square(rmse_vals)))
         
-        # Check if this is the best RMSE so far
-        if overall_rmse is not None and overall_rmse < best_rmse:
-            best_rmse = overall_rmse
-            best_parameters = {
-                'room_width': room_width,
-                'room_height': room_height,
-                'horizontal_step': horizontal_step,
-                'vertical_step': vertical_step
-            }
-            best_results = {
-                'rfid_rmse': rfid_rmse,
-                'rfid_areas': rfid_areas,
-                'overall_rmse': overall_rmse
-            }
-
-
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    print(f"\nOptimization completed in {elapsed_time:.2f} seconds.")
+        # Store results
+        results['room_width'].append(room_width)
+        results['room_height'].append(room_height)
+        results['horizontal_step'].append(h_step)
+        results['vertical_step'].append(v_step)
+        results['rmse'].append(overall_rmse)
     
-    if best_parameters:
-        print("\nBest Parameter Set Found:")
-        for param, value in best_parameters.items():
-            print(f"  {param}: {value}")
-        print(f"  Overall RMSE: {best_rmse:.2f}")
-    else:
-        print("No valid simulations were run to compute RMSE.")
+    elapsed = time.time() - start_time
+    print(f"Completed simulations in {elapsed:.2f} sec, plotted {len(results['rmse'])} points.")
+
+    # Plot graphs for each parameter vs RMSE
+    for param in ['room_width', 'room_height', 'horizontal_step', 'vertical_step']:
+        plt.figure()
+        plt.scatter(results[param], results['rmse'])
+        plt.title(f"{param.replace('_', ' ').title()} vs RMSE")
+        plt.xlabel(param.replace('_', ' ').title())
+        plt.ylabel("Overall RMSE")
+        plt.grid(True)
+        plt.show()
 
 if __name__ == "__main__":
     main()

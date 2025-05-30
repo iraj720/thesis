@@ -118,10 +118,13 @@ def startSimulation(robot_config, room_config, rfid_positions, withAnimation):
             estimated_zone = shapes[0]
             for s in shapes[1:]:
                 # intersect shapes
-                if s.is_valid and estimated_zone.is_valid:
-                    intersection = estimated_zone.intersection(s)
-                    if not intersection.is_empty:
-                        estimated_zone = intersection
+                if s.is_valid and not s.is_empty and not estimated_zone.is_empty and estimated_zone.is_valid:
+                    try:
+                        intersection = estimated_zone.intersection(s)
+                        if not intersection.is_empty:
+                            estimated_zone = intersection
+                    except:
+                        pass
 
             rfid_zones[i] = estimated_zone
             rfid_areas[i] = estimated_zone.area if not estimated_zone.is_empty else 0

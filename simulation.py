@@ -33,7 +33,7 @@ class RobotConfig:
         self.m = m
 
 class RoomConfig:
-    def __init__(self, room_width=50, room_height=10, horizontal_step=1, vertical_step=2):
+    def __init__(self, room_width=50.0, room_height=10.0, horizontal_step=1.0, vertical_step=2.0):
         """
         Configuration for the dimensions of the room and robot scanning step size.
 

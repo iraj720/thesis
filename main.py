@@ -9,10 +9,9 @@ import numpy as np
 # Define the fixed positions of RFID tags in the room
 rfid_positions = [
     (11.1, 7.5),
-    # (25.1, 7.3),
-    # (40.3, 3.3),
-    # (35.6, 9.1),
-    # (15.6, 1)
+    (5.1, 3.3),
+    (18, 18),
+    (15.6, 1)
 ]
 
 # Configure robot sensing properties and room dimensions
@@ -23,8 +22,8 @@ robot_config = RobotConfig(
 room_config = RoomConfig(
     room_width=20,            # Width of the room
     room_height=20,           # Height of the room
-    horizontal_step=1,        # Step size for robot movement (x-axis)
-    vertical_step=1           # Step size for robot movement (y-axis)
+    horizontal_step=0.5,        # Step size for robot movement (x-axis)
+    vertical_step=0.5           # Step size for robot movement (y-axis)
 )
 
 ##############################

@@ -87,7 +87,7 @@ def animate(room_config, robot_config, robot_path, rfid_zones, rfid_positions, a
 
                 zone_patches.append(patches)
             
-            time.sleep(0.2)  # For slower, more visual animation
+            time.sleep(0.01)  # For slower, more visual animation
         return [robot_marker] +[p for sub in zone_patches for p in sub]
 
     ####################

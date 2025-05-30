@@ -36,7 +36,7 @@ class CustomAntenna(Antenna):
             phi = (i * angle_range / num_points) - (angle_range / 2)
 
             # Distance model as an exponential function of RSSI and phi
-            d = np.exp((-rssi - (phi ** 2) / 227 - 42.43) / 11.55)
+            d = np.exp((-rssi + (0.381 * phi - 0.0037 * (phi ** 2)) - 42.43) / 11.55)
             rad = np.deg2rad(theta)
             x = d * math.cos(rad)
             y = d * math.sin(rad)
@@ -50,7 +50,8 @@ class CustomAntenna(Antenna):
         if angleAtt is None:
             return -1000  # Out of beam
         distance = np.hypot(x_ant - x, y_ant - y)
-        return calculate_rssi(distance) + angleAtt
+        print(distance)
+        return calculate_rssi(abs(distance)) + angleAtt
 
     def angleAttenuation(self, x, y, x_ant, y_ant, azimuth):
         """Return angle-dependent attenuation if within 45°, otherwise None."""
@@ -60,7 +61,7 @@ class CustomAntenna(Antenna):
 
         if abs(delta_theta) > 45:
             return None
-        return -(delta_theta ** 2) / 227
+        return 0.381 * delta_theta - 0.0037 * (delta_theta ** 2)
 
 class CosineAntenna(Antenna):
     def __init__(self,Pt=1, lam=0.33, G0=2.0, m=4, n_points=360, theta_lim=np.pi/2):
@@ -155,7 +156,7 @@ class BetaAntenna(Antenna):
 
 def calculate_rssi(distance_meters):
     if distance_meters <= 0:
-        raise ValueError("Distance must be greater than 0 meters.")
+        return 100
     
     return -11.55 * math.log(distance_meters) - 42.43
 
